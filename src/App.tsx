@@ -10,83 +10,38 @@ export function App() {
   const [movies, setMovies] = useState<Movie[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
-  const [genreMap, setGenreMap] = useState<Record<number, string>>({});
 
   useEffect(() => {
-    const TMDB_ACCESS_TOKEN = 'eyJhbGciOiJIUzI1NiJ9.eyJhdWQiOiIzNzdmY2NhYzllMzQxY2FjZDJiNzhmOTI3Njk3ZDAxOSIsIm5iZiI6MTc3ODM5MTgxOS44ODQsInN1YiI6IjZhMDAxYjBiNTg0ZjA1NmUyNzMxNmZmZSIsInNjb3BlcyI6WyJhcGlfcmVhZCJdLCJ2ZXJzaW9uIjoxfQ.SoIW-61mDX_3rPxaOvpYapyBOvFpPPnKm_9rMIQn5bU';
-    const controller = new AbortController();
-
-    const fetchGenreMap = async () => {
-      try {
-        const genreRes = await fetch('https://api.themoviedb.org/3/genre/movie/list?language=en-US', {
-          headers: {
-            Authorization: `Bearer ${TMDB_ACCESS_TOKEN}`,
-            accept: 'application/json'
-          },
-          signal: controller.signal
-        });
-
-        const genreData = await genreRes.json();
-        const map: Record<number, string> = {};
-        if (genreData.genres) {
-          genreData.genres.forEach((g: any) => {
-            map[g.id] = g.name;
-          });
-        }
-        setGenreMap(map);
-      } catch (err) {
-        if ((err as any).name !== 'AbortError') {
-          console.error('Failed to load TMDB genres:', err);
-        }
-      }
-    };
-
-    fetchGenreMap();
-
-    return () => controller.abort();
-  }, []);
-
-  useEffect(() => {
-    const TMDB_ACCESS_TOKEN = 'eyJhbGciOiJIUzI1NiJ9.eyJhdWQiOiIzNzdmY2NhYzllMzQxY2FjZDJiNzhmOTI3Njk3ZDAxOSIsIm5iZiI6MTc3ODM5MTgxOS44ODQsInN1YiI6IjZhMDAxYjBiNTg0ZjA1NmUyNzMxNmZmZSIsInNjb3BlcyI6WyJhcGlfcmVhZCJdLCJ2ZXJzaW9uIjoxfQ.SoIW-61mDX_3rPxaOvpYapyBOvFpPPnKm_9rMIQn5bU';
-    const platformOptions = ['netflix', 'prime', 'hotstar', 'zee5', 'sonyliv', 'jiocinema'];
     const controller = new AbortController();
 
     const fetchMovies = async () => {
       setLoading(true);
       try {
-        const endpoint = "https://where-to-watch-99hz.onrender.com/api/movies"
-        
+        const endpoint = `https://where-to-watch-99hz.onrender.com/api/movies?q=${encodeURIComponent(searchQuery.trim())}`;
+
         const moviesRes = await fetch(endpoint, {
-          headers: {
-            Authorization: `Bearer ${TMDB_ACCESS_TOKEN}`,
-            accept: 'application/json'
-          },
           signal: controller.signal
         });
 
         const moviesData = await moviesRes.json();
-        const mappedMovies: Movie[] = (moviesData.results || []).map((tmdbMovie: any) => {
-          const numPlatforms = Math.floor(Math.random() * 3) + 1;
-          const shuffled = [...platformOptions].sort(() => 0.5 - Math.random());
-          const moviePlatforms = shuffled.slice(0, numPlatforms);
-
+        const mappedMovies: Movie[] = (Array.isArray(moviesData) ? moviesData : moviesData.results || []).map((movie: any) => {
           return {
-            id: String(tmdbMovie.id),
-            title: tmdbMovie.title || tmdbMovie.name || 'Unknown Title',
-            year: tmdbMovie.release_date ? parseInt(tmdbMovie.release_date.substring(0, 4)) : new Date().getFullYear(),
-            genre: tmdbMovie.genre_ids ? tmdbMovie.genre_ids.map((id: number) => genreMap[id] || 'Unknown') : ['Unknown'],
-            language: tmdbMovie.original_language ? tmdbMovie.original_language.toUpperCase() : 'Unknown',
-            rating: tmdbMovie.vote_average || 0,
-            poster: tmdbMovie.poster_path ? `https://image.tmdb.org/t/p/w500${tmdbMovie.poster_path}` : 'https://via.placeholder.com/500x750?text=No+Poster',
-            platforms: moviePlatforms,
-            description: tmdbMovie.overview || 'No description available.'
+            id: String(movie.id),
+            title: movie.title || movie.name || 'Unknown Title',
+            year: movie.year || new Date().getFullYear(),
+            genre: movie.genre || ['Unknown'],
+            language: movie.language || 'Unknown',
+            rating: movie.rating || 0,
+            poster: movie.poster || 'https://via.placeholder.com/500x750?text=No+Poster',
+            platforms: movie.platforms || ['netflix'],
+            description: movie.description || 'No description available.'
           };
         });
 
         setMovies(mappedMovies);
       } catch (err) {
         if ((err as any).name !== 'AbortError') {
-          console.error('Failed to fetch movies from TMDB:', err);
+          console.error('Failed to fetch movies from backend:', err);
           setMovies([]);
         }
       } finally {
@@ -102,7 +57,7 @@ export function App() {
       clearTimeout(debounce);
       controller.abort();
     };
-  }, [searchQuery, genreMap]);
+  }, [searchQuery]);
 
   const [selectedPlatform, setSelectedPlatform] = useState<string | null>(null);
   const [selectedMovie, setSelectedMovie] = useState<Movie | null>(null);
