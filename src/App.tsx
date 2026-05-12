@@ -54,10 +54,8 @@ export function App() {
     const fetchMovies = async () => {
       setLoading(true);
       try {
-        const endpoint = searchQuery.trim()
-          ? `https://api.themoviedb.org/3/search/movie?query=${encodeURIComponent(searchQuery.trim())}&language=en-US&page=1&include_adult=false`
-          : 'https://api.themoviedb.org/3/trending/movie/week?language=en-US&page=1';
-
+        const endpoint = "https://where-to-watch-99hz.onrender.com/api/movies"
+        
         const moviesRes = await fetch(endpoint, {
           headers: {
             Authorization: `Bearer ${TMDB_ACCESS_TOKEN}`,
