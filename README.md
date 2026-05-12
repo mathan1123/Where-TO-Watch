@@ -5,4 +5,4 @@
 
 ## Where TO Watch
 
-Movie finder application that displays movie information,rating with real-time movie details and OTT Streaming Availability.
+A Movie discovery Application that helps users search movies,view ratings,cast details, and  find OTT streaming Availability.
