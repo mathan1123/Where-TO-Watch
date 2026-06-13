@@ -5,45 +5,53 @@ import { FilterChips } from './components/FilterChips';
 import { MovieCard } from './components/MovieCard';
 import { MovieModal } from './components/MovieModal';
 import { EmptyState } from './components/EmptyState';
-import { Movie } from './data/movies';
+import { Movie, moviesData } from './data/movies';
+import { searchMovies, getTrendingMovies, getMoviesByPlatform, isTMDBConfigured } from './services/tmdbService';
+
 export function App() {
-  const [movies, setMovies] = useState<Movie[]>([]);
+  const [movies, setMovies] = useState<Movie[]>(moviesData);
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
+  const [selectedPlatform, setSelectedPlatform] = useState<string | null>(null);
+  const [selectedMovie, setSelectedMovie] = useState<Movie | null>(null);
+  const [usingTMDB, setUsingTMDB] = useState(false);
 
+  // Fetch movies on component mount or when filters change
   useEffect(() => {
-    const controller = new AbortController();
-
     const fetchMovies = async () => {
       setLoading(true);
       try {
-        const endpoint = `https://where-to-watch-99hz.onrender.com/api/movies?q=${encodeURIComponent(searchQuery.trim())}`;
+        let results: Movie[] = [];
 
-        const moviesRes = await fetch(endpoint, {
-          signal: controller.signal
-        });
+        // Try TMDB first if configured
+        if (isTMDBConfigured()) {
+          if (searchQuery.trim()) {
+            // Search mode
+            results = await searchMovies(searchQuery);
+          } else if (selectedPlatform) {
+            // Platform filter mode
+            results = await getMoviesByPlatform(selectedPlatform);
+          } else {
+            // Trending mode
+            results = await getTrendingMovies();
+          }
 
-        const moviesData = await moviesRes.json();
-        const mappedMovies: Movie[] = (Array.isArray(moviesData) ? moviesData : moviesData.results || []).map((movie: any) => {
-          return {
-            id: String(movie.id),
-            title: movie.title || movie.name || 'Unknown Title',
-            year: movie.year || new Date().getFullYear(),
-            genre: movie.genre || ['Unknown'],
-            language: movie.language || 'Unknown',
-            rating: movie.rating || 0,
-            poster: movie.poster || 'https://via.placeholder.com/500x750?text=No+Poster',
-            platforms: movie.platforms || ['netflix'],
-            description: movie.description || 'No description available.'
-          };
-        });
-
-        setMovies(mappedMovies);
-      } catch (err) {
-        if ((err as any).name !== 'AbortError') {
-          console.error('Failed to fetch movies from backend:', err);
-          setMovies([]);
+          if (results.length > 0) {
+            setMovies(results);
+            setUsingTMDB(true);
+            console.log('✅ Loaded from TMDB API:', results.length, 'movies');
+            return;
+          }
         }
+
+        // Fallback to local data if TMDB fails or not configured
+        setMovies(moviesData);
+        setUsingTMDB(false);
+        console.log('⚠️ Using local data:', moviesData.length, 'movies');
+      } catch (error) {
+        console.error('Error fetching movies:', error);
+        setMovies(moviesData);
+        setUsingTMDB(false);
       } finally {
         setLoading(false);
       }
@@ -51,23 +59,42 @@ export function App() {
 
     const debounce = setTimeout(() => {
       fetchMovies();
-    }, 300);
+    }, 500); // Debounce to avoid too many API calls
 
-    return () => {
-      clearTimeout(debounce);
-      controller.abort();
-    };
-  }, [searchQuery]);
+    return () => clearTimeout(debounce);
+  }, [searchQuery, selectedPlatform]);
 
-  const [selectedPlatform, setSelectedPlatform] = useState<string | null>(null);
-  const [selectedMovie, setSelectedMovie] = useState<Movie | null>(null);
-  // Filter logic
+  // Note: For TMDB, filtering is handled server-side via API calls
+  // For local data, we still do client-side filtering
   const filteredMovies = useMemo(() => {
-    return movies.filter((movie) => {
-      const matchesPlatform = selectedPlatform ? movie.platforms.includes(selectedPlatform) : true;
-      return matchesPlatform;
-    });
-  }, [movies, selectedPlatform]);
+    if (usingTMDB) {
+      // TMDB already returns filtered results via API
+      return movies;
+    }
+
+    // Client-side filtering for local data
+    let results = movies;
+
+    if (searchQuery.trim()) {
+      const query = searchQuery.toLowerCase().trim();
+      results = results.filter((movie) => {
+        return (
+          movie.title.toLowerCase().includes(query) ||
+          movie.description.toLowerCase().includes(query) ||
+          movie.genre.some(g => g.toLowerCase().includes(query))
+        );
+      });
+    }
+
+    if (selectedPlatform) {
+      results = results.filter((movie) =>
+        movie.platforms.includes(selectedPlatform)
+      );
+    }
+
+    return results;
+  }, [movies, searchQuery, selectedPlatform, usingTMDB]);
+
   return (
     <div className="min-h-screen bg-[#050505] text-white relative overflow-x-hidden">
       {/* Background Ambient Glow */}
@@ -93,6 +120,17 @@ export function App() {
           <h1 className="text-5xl md:text-7xl font-extrabold tracking-tight mb-4 text-transparent bg-clip-text bg-gradient-to-b from-white to-white/60">
             Where to Watch?
           </h1>
+          <div className="flex justify-center gap-2 mb-4">
+            {usingTMDB ? (
+              <span className="text-xs px-3 py-1 rounded-full bg-green-500/20 text-green-400 border border-green-500/30">
+                🎬 TMDB API
+              </span>
+            ) : (
+              <span className="text-xs px-3 py-1 rounded-full bg-yellow-500/20 text-yellow-400 border border-yellow-500/30">
+                📦 Local Data
+              </span>
+            )}
+          </div>
           <p className="text-lg md:text-xl text-white/60 max-w-2xl mx-auto mb-10">
             Find out which OTT platform is streaming your favorite movies.
             Search across Netflix, Prime, Hotstar, and more.
@@ -158,10 +196,11 @@ export function App() {
 
         {/* Movie Grid */}
         {loading ? (
-          <div className="flex justify-center items-center py-20">
-            <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-white"></div>
+          <div className="flex flex-col justify-center items-center py-20">
+            <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-white mb-4"></div>
+            <p className="text-white/60 text-sm">Loading movies from API...</p>
           </div>
-        ) : filteredMovies.length > 0 ?
+        ) : filteredMovies.length > 0 ? (
         <motion.div
           layout
           className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4 md:gap-6">
@@ -175,13 +214,12 @@ export function App() {
 
             )}
             </AnimatePresence>
-          </motion.div> :
-
+          </motion.div>
+        ) : (
         <EmptyState
           type={searchQuery ? 'no-results' : 'no-platform'}
           query={searchQuery} />
-
-        }
+        )}
       </main>
 
       {/* Movie Detail Modal */}
