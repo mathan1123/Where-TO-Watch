@@ -54,7 +54,7 @@ VITE_TMDB_API_KEY=your_api_key_here
 npm run dev
 ```
 
-Open: http://localhost:5173
+Open: https://where-to-watch-47xy.vercel.app/
 
 ---
 
@@ -342,7 +342,7 @@ Created with ❤️ for movie lovers
 
 ## 🚀 Quick Links
 
-- **Live Demo**: http://localhost:5173
+- **Live Demo**: https://where-to-watch-47xy.vercel.app/
 - **TMDB API**: https://www.themoviedb.org/settings/api
 - **Get Started**: See [TMDB_QUICK_START.md](./TMDB_QUICK_START.md)
 
