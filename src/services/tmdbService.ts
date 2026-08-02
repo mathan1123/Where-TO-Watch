@@ -4,10 +4,11 @@ import { Movie } from '../data/movies';
 // Use Vite's import.meta.env (not process.env)
 const TMDB_API_KEY = import.meta.env.VITE_TMDB_API_KEY || 'YOUR_API_KEY_HERE';
 
-// Use proxy in development to avoid CORS, direct URL in production
+// Use proxy in development (Vite proxy) and production (Vercel serverless function)
+// This avoids CORS issues on all devices including mobile!
 const TMDB_BASE_URL = import.meta.env.DEV
   ? '/tmdb-api'
-  : 'https://api.themoviedb.org/3';
+  : '/api/tmdb';
 
 const IMAGE_BASE_URL = 'https://image.tmdb.org/t/p/w500';
 
