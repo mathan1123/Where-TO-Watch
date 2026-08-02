@@ -3,7 +3,12 @@ import { Movie } from '../data/movies';
 // Get your free API key from: https://www.themoviedb.org/settings/api
 // Use Vite's import.meta.env (not process.env)
 const TMDB_API_KEY = import.meta.env.VITE_TMDB_API_KEY || 'YOUR_API_KEY_HERE';
-const TMDB_BASE_URL = 'https://api.themoviedb.org/3';
+
+// Use proxy in development to avoid CORS, direct URL in production
+const TMDB_BASE_URL = import.meta.env.DEV
+  ? '/tmdb-api'
+  : 'https://api.themoviedb.org/3';
+
 const IMAGE_BASE_URL = 'https://image.tmdb.org/t/p/w500';
 
 // Platform mapping (TMDB provider IDs to our platform names)
@@ -49,12 +54,26 @@ interface TMDBGenre {
 
 let genreMap: Record<number, string> = {};
 
+// Fetch with timeout helper
+async function fetchWithTimeout(url: string, timeoutMs = 8000): Promise<Response> {
+  const controller = new AbortController();
+  const id = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const response = await fetch(url, { signal: controller.signal });
+    clearTimeout(id);
+    return response;
+  } catch (err) {
+    clearTimeout(id);
+    throw err;
+  }
+}
+
 // Fetch genre list
 async function fetchGenres(): Promise<Record<number, string>> {
   if (Object.keys(genreMap).length > 0) return genreMap;
 
   try {
-    const response = await fetch(
+    const response = await fetchWithTimeout(
       `${TMDB_BASE_URL}/genre/movie/list?api_key=${TMDB_API_KEY}&language=en-US`
     );
     const data = await response.json();
@@ -77,21 +96,16 @@ export async function searchMovies(query: string): Promise<Movie[]> {
   if (!query.trim()) return [];
 
   try {
-    const response = await fetch(
+    const response = await fetchWithTimeout(
       `${TMDB_BASE_URL}/search/movie?api_key=${TMDB_API_KEY}&query=${encodeURIComponent(query)}&language=en-US`
     );
     const data = await response.json();
     
     const genres = await fetchGenres();
-    const movieResults = (data.results || []).slice(0, 20);
+    const movieResults = (data.results || []).slice(0, 12);
     
-    const movies = await Promise.all(
-      movieResults.map(async (movie: TMDBMovie) => {
-        const movieObj = tmdbToMovie(movie, genres);
-        movieObj.platforms = await getWatchProviders(movie.id);
-        return movieObj;
-      })
-    );
+    // Batch watch provider calls with concurrency limit of 5
+    const movies = await batchWithProviders(movieResults, genres);
     
     return movies;
   } catch (error) {
@@ -103,21 +117,28 @@ export async function searchMovies(query: string): Promise<Movie[]> {
 // Get trending movies
 export async function getTrendingMovies(): Promise<Movie[]> {
   try {
-    const response = await fetch(
+    const response = await fetchWithTimeout(
       `${TMDB_BASE_URL}/trending/movie/week?api_key=${TMDB_API_KEY}&language=en-US`
     );
+    
+    if (!response.ok) {
+      console.error('TMDB trending API error:', response.status, response.statusText);
+      return [];
+    }
+
     const data = await response.json();
     
+    if (data.status_code) {
+      // TMDB error response (e.g., invalid API key)
+      console.error('TMDB API Error:', data.status_message);
+      return [];
+    }
+
     const genres = await fetchGenres();
-    const movieResults = (data.results || []).slice(0, 20);
+    const movieResults = (data.results || []).slice(0, 16);
     
-    const movies = await Promise.all(
-      movieResults.map(async (movie: TMDBMovie) => {
-        const movieObj = tmdbToMovie(movie, genres);
-        movieObj.platforms = await getWatchProviders(movie.id);
-        return movieObj;
-      })
-    );
+    // Batch watch provider calls with concurrency limit of 5
+    const movies = await batchWithProviders(movieResults, genres);
     
     return movies;
   } catch (error) {
@@ -132,25 +153,15 @@ export async function getMoviesByPlatform(platform: string): Promise<Movie[]> {
     const genreIds = getGenresByPlatform(platform);
     const genreStr = genreIds.join(',');
     
-    const response = await fetch(
+    const response = await fetchWithTimeout(
       `${TMDB_BASE_URL}/discover/movie?api_key=${TMDB_API_KEY}&with_genres=${genreStr}&language=en-US&sort_by=popularity.desc`
     );
     const data = await response.json();
     
     const genres = await fetchGenres();
-    const movieResults = (data.results || []).slice(0, 20);
+    const movieResults = (data.results || []).slice(0, 16);
     
-    const movies = await Promise.all(
-      movieResults.map(async (movie: TMDBMovie) => {
-        const movieObj = tmdbToMovie(movie, genres);
-        movieObj.platforms = await getWatchProviders(movie.id);
-        // Ensure the selected platform is included
-        if (!movieObj.platforms.includes(platform)) {
-          movieObj.platforms.push(platform);
-        }
-        return movieObj;
-      })
-    );
+    const movies = await batchWithProviders(movieResults, genres, platform);
     
     return movies;
   } catch (error) {
@@ -159,11 +170,40 @@ export async function getMoviesByPlatform(platform: string): Promise<Movie[]> {
   }
 }
 
+// Batch API calls with concurrency limit to avoid rate limiting / mobile slowness
+async function batchWithProviders(
+  movieResults: TMDBMovie[],
+  genres: Record<number, string>,
+  forcePlatform?: string
+): Promise<Movie[]> {
+  const CONCURRENCY = 4; // Max 4 parallel watch-provider calls at a time
+  const results: Movie[] = [];
+
+  for (let i = 0; i < movieResults.length; i += CONCURRENCY) {
+    const batch = movieResults.slice(i, i + CONCURRENCY);
+    const batchResults = await Promise.all(
+      batch.map(async (movie: TMDBMovie) => {
+        const movieObj = tmdbToMovie(movie, genres);
+        movieObj.platforms = await getWatchProviders(movie.id);
+        // Ensure the selected platform is included if filtering by platform
+        if (forcePlatform && !movieObj.platforms.includes(forcePlatform)) {
+          movieObj.platforms.push(forcePlatform);
+        }
+        return movieObj;
+      })
+    );
+    results.push(...batchResults);
+  }
+
+  return results;
+}
+
 // Get movie watch providers (where to watch)
 async function getWatchProviders(movieId: number): Promise<string[]> {
   try {
-    const response = await fetch(
-      `${TMDB_BASE_URL}/movie/${movieId}/watch/providers?api_key=${TMDB_API_KEY}`
+    const response = await fetchWithTimeout(
+      `${TMDB_BASE_URL}/movie/${movieId}/watch/providers?api_key=${TMDB_API_KEY}`,
+      5000 // 5s timeout per provider call
     );
     const data = await response.json();
     
@@ -205,10 +245,10 @@ async function getWatchProviders(movieId: number): Promise<string[]> {
       }
     }
     
-    return providers.length > 0 ? providers : ['netflix'];
+    return providers.length > 0 ? providers : [];
   } catch (error) {
     console.error('Failed to fetch watch providers:', error);
-    return ['netflix'];
+    return [];
   }
 }
 
@@ -232,8 +272,8 @@ function tmdbToMovie(tmdbMovie: TMDBMovie, genres: Record<number, string>): Movi
     rating: Math.round(tmdbMovie.vote_average * 10) / 10,
     poster: tmdbMovie.poster_path 
       ? `${IMAGE_BASE_URL}${tmdbMovie.poster_path}`
-      : 'https://via.placeholder.com/500x750?text=No+Poster',
-    platforms: ['netflix', 'prime'], // Default - could be enhanced with actual provider data
+      : 'https://placehold.co/500x750?text=No+Poster',
+    platforms: [],
     description: tmdbMovie.overview || 'No description available.'
   };
 }
